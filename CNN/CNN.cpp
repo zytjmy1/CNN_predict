@@ -307,5 +307,5 @@ int main() {
     free(test_images);
     free(test_labels);
 
-    return 0;
+    return 1;
 }
