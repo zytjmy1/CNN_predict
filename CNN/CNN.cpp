@@ -7,23 +7,19 @@
 
 namespace fs = std::filesystem;
 
-#define INPUT_NODES 784  // 28x28 pixels
-#define HIDDEN_NODES_1 128
-#define HIDDEN_NODES_2 64
+#define INPUT_NODES  784  // 28x28 pixels
 #define OUTPUT_NODES 10
-#define LEARNING_RATE 0.1
-#define EPOCHS 10
-#define TRAIN_IMAGES 8700
-#define TEST_IMAGES 1300
+#define TRAIN_IMAGES  8700  // 28x28 pixels
+#define TEST_IMAGES  1300   // 28x28 pixels
 
-const char* train_path = "C:\\Users\\HP\\Desktop\\data\\training";
-const char* test_path = "C:\\Users\\HP\\Desktop\\data\\testing";
+const char* train_path = "C:\\Users\\HP\\Desktop\\vs file\\CNN\\data\\training";
+const char* test_path = "C:\\Users\\HP\\Desktop\\vs file\\CNN\\data\\testing";
 
-double sigmoid(double x) {
+double sigmoid(double x) {             //  正向传播时 sigmoid激活函数
     return 1.0 / (1.0 + exp(-x));
 }
 
-double sigmoid_derivative(double x) {
+double sigmoid_derivative(double x) {  //  反向传播时使用 sigmoid的导数
     return x * (1.0 - x);
 }
 
@@ -49,15 +45,29 @@ void shuffle_data(double images[][INPUT_NODES], int labels[], int num_samples) {
     }
 }
 
+//  前向传播
 void forward_propagation(double* input, double* hidden1, double* hidden2, double* output,
-    double* input_hidden1_weights, double* hidden1_hidden2_weights, double* hidden2_output_weights) {
+    double* input_hidden1_weights, double* hidden1_hidden2_weights, double* hidden2_output_weights,
+    int HIDDEN_NODES_1, int HIDDEN_NODES_2, bool apply_dropout = false, double dropout_rate = 0.5) {
+    // Dropout mask
+    int* dropout_mask1 = (int*)malloc(HIDDEN_NODES_1 * sizeof(int));
+    int* dropout_mask2 = (int*)malloc(HIDDEN_NODES_2 * sizeof(int));
+    for (int i = 0; i < HIDDEN_NODES_1; i++) {
+        dropout_mask1[i] = (rand() / (double)RAND_MAX) > dropout_rate ? 1 : 0;
+    }
+    for (int i = 0; i < HIDDEN_NODES_2; i++) {
+        dropout_mask2[i] = (rand() / (double)RAND_MAX) > dropout_rate ? 1 : 0;
+    }
+
     // 输入层到隐藏层1
     for (int i = 0; i < HIDDEN_NODES_1; i++) {
         hidden1[i] = 0.0;
-        for (int j = 0; j < INPUT_NODES; j++) {
+        for (int j = 0; j < INPUT_NODES; j++) {// 更新节点值
             hidden1[i] += input[j] * input_hidden1_weights[j * HIDDEN_NODES_1 + i];
         }
         hidden1[i] = sigmoid(hidden1[i]);
+        // 应用dropout
+        if (apply_dropout) hidden1[i] *= dropout_mask1[i];
     }
 
     // 隐藏层1到隐藏层2
@@ -67,6 +77,8 @@ void forward_propagation(double* input, double* hidden1, double* hidden2, double
             hidden2[i] += hidden1[j] * hidden1_hidden2_weights[j * HIDDEN_NODES_2 + i];
         }
         hidden2[i] = sigmoid(hidden2[i]);
+        // 应用dropout
+        if (apply_dropout) hidden2[i] *= dropout_mask2[i];
     }
 
     // 隐藏层2到输出层
@@ -77,17 +89,21 @@ void forward_propagation(double* input, double* hidden1, double* hidden2, double
         }
         output[i] = sigmoid(output[i]);
     }
+
+    free(dropout_mask1);
+    free(dropout_mask2);
 }
 
 void back_propagation(double* input, double* hidden1, double* hidden2, double* output, double* target,
-    double* input_hidden1_weights, double* hidden1_hidden2_weights, double* hidden2_output_weights) {
+    double* input_hidden1_weights, double* hidden1_hidden2_weights, double* hidden2_output_weights,
+    int HIDDEN_NODES_1, int HIDDEN_NODES_2, double LEARNING_RATE, double L2_REGULARIZATION) {
     double output_error[OUTPUT_NODES];
-    double hidden2_error[HIDDEN_NODES_2];
-    double hidden1_error[HIDDEN_NODES_1];
+    double* hidden2_error = (double*)malloc(HIDDEN_NODES_2 * sizeof(double));
+    double* hidden1_error = (double*)malloc(HIDDEN_NODES_1 * sizeof(double));
 
     // 输出层误差
     for (int i = 0; i < OUTPUT_NODES; i++) {
-        output_error[i] = (target[i] - output[i]) * sigmoid_derivative(output[i]);
+        output_error[i] = target[i] - output[i];  //交叉熵损失特性
     }
 
     // 隐藏层2误差
@@ -110,25 +126,36 @@ void back_propagation(double* input, double* hidden1, double* hidden2, double* o
 
     // 更新权重（隐藏层2到输出层）
     for (int i = 0; i < HIDDEN_NODES_2; i++) {
-        for (int j = 0; j < OUTPUT_NODES; j++) {
+        for (int j = 0; j < OUTPUT_NODES; j++) {           //跟输出层节点连接的隐藏层2连线都要更新权重
+                                                           //权重和误差成正相关
             hidden2_output_weights[i * OUTPUT_NODES + j] += LEARNING_RATE * output_error[j] * hidden2[i];
-        }
+            // L2 正则化（加入权重平方和的惩罚项）
+            hidden2_output_weights[i * OUTPUT_NODES + j] -= LEARNING_RATE * L2_REGULARIZATION * hidden2_output_weights[i * OUTPUT_NODES + j];
+        }                                                 
     }
 
     // 更新权重（隐藏层1到隐藏层2）
     for (int i = 0; i < HIDDEN_NODES_1; i++) {
         for (int j = 0; j < HIDDEN_NODES_2; j++) {
             hidden1_hidden2_weights[i * HIDDEN_NODES_2 + j] += LEARNING_RATE * hidden2_error[j] * hidden1[i];
-        }
+            // L2 正则化
+            hidden1_hidden2_weights[i * HIDDEN_NODES_2 + j] -= LEARNING_RATE * L2_REGULARIZATION * hidden1_hidden2_weights[i * HIDDEN_NODES_2 + j];
+        }                                //L2_REGULARIZATION为0.1~0.0001的数，以减小 大权重节点的影响
     }
 
     // 更新权重（输入层到隐藏层1）
     for (int i = 0; i < INPUT_NODES; i++) {
         for (int j = 0; j < HIDDEN_NODES_1; j++) {
             input_hidden1_weights[i * HIDDEN_NODES_1 + j] += LEARNING_RATE * hidden1_error[j] * input[i];
+            // L2 正则化
+            input_hidden1_weights[i * HIDDEN_NODES_1 + j] -= LEARNING_RATE * L2_REGULARIZATION * input_hidden1_weights[i * HIDDEN_NODES_1 + j];
         }
     }
+
+    free(hidden2_error);
+    free(hidden1_error);
 }
+
 // 加载数据
 void load_data(const std::string& dataset_path, double images[][INPUT_NODES], int labels[], int max_images) {
     int index = 0;
@@ -144,7 +171,7 @@ void load_data(const std::string& dataset_path, double images[][INPUT_NODES], in
                     cv::resize(img, img, cv::Size(28, 28));
                     for (int i = 0; i < 28; ++i) {
                         for (int j = 0; j < 28; ++j) {
-                            images[index][i * 28 + j] = static_cast<double>(img.at<uchar>(i, j)) / 255.0;
+                            images[index][i * 28 + j] = static_cast<double>(img.at<uchar>(i, j)) / 255.0;//归一化处理
                         }
                     }
                     labels[index++] = label;
@@ -153,10 +180,48 @@ void load_data(const std::string& dataset_path, double images[][INPUT_NODES], in
         }
     }
 }
+
 int main() {
     srand((unsigned int)time(NULL));
+
+    // 手动输入超参数
+    int HIDDEN_NODES_1, HIDDEN_NODES_2, EPOCHS;
+    double LEARNING_RATE, L2_REGULARIZATION, DROPOUT_RATE;
+
+    printf("请输入隐藏层1的节点数: ");
+    if (scanf_s("%d", &HIDDEN_NODES_1) != 1) {
+        printf("输入错误，请输入一个整数。\n");
+        return -1;
+    }
+    printf("请输入隐藏层2的节点数: ");
+    if (scanf_s("%d", &HIDDEN_NODES_2) != 1) {
+        printf("输入错误，请输入一个整数。\n");
+        return -1;
+    }
+    printf("请输入学习率: ");
+    if (scanf_s("%lf", &LEARNING_RATE) != 1) {
+        printf("输入错误，请输入一个浮点数。\n");
+        return -1;
+    }
+    printf("请输入训练轮数: ");
+    if (scanf_s("%d", &EPOCHS) != 1) {
+        printf("输入错误，请输入一个整数。\n");
+        return -1;
+    }
+    printf("请输入L2正则化参数: ");
+    if (scanf_s("%lf", &L2_REGULARIZATION) != 1) {
+        printf("输入错误，请输入一个浮点数。\n");
+        return -1;
+    }
+    printf("请输入dropout率（0-1之间）: ");
+    if (scanf_s("%lf", &DROPOUT_RATE) != 1) {
+        printf("输入错误，请输入一个浮点数。\n");
+        return -1;
+    }
+
     // 存储每个epoch的总误差
-    double epoch_errors[EPOCHS];
+    double* epoch_errors = (double*)malloc(EPOCHS * sizeof(double));
+
     // 动态分配内存
     double* input = (double*)malloc(INPUT_NODES * sizeof(double));
     double* hidden1 = (double*)malloc(HIDDEN_NODES_1 * sizeof(double));
@@ -164,6 +229,7 @@ int main() {
     double* output = (double*)malloc(OUTPUT_NODES * sizeof(double));
     double* target = (double*)malloc(OUTPUT_NODES * sizeof(double));
 
+                                     //存放权重连线，每两层之间都有两层节点乘积的连线数
     double* input_hidden1_weights = (double*)malloc(INPUT_NODES * HIDDEN_NODES_1 * sizeof(double));
     double* hidden1_hidden2_weights = (double*)malloc(HIDDEN_NODES_1 * HIDDEN_NODES_2 * sizeof(double));
     double* hidden2_output_weights = (double*)malloc(HIDDEN_NODES_2 * OUTPUT_NODES * sizeof(double));
@@ -200,15 +266,17 @@ int main() {
             }
 
             // 前向传播
-            forward_propagation(input, hidden1, hidden2, output, input_hidden1_weights, hidden1_hidden2_weights, hidden2_output_weights);
+            forward_propagation(input, hidden1, hidden2, output, input_hidden1_weights, hidden1_hidden2_weights, hidden2_output_weights, HIDDEN_NODES_1, HIDDEN_NODES_2, true, DROPOUT_RATE);
 
-            // 计算误差（均方误差）
+            // 计算误差（交叉熵）
             double sample_error = 0.0;
             for (int k = 0; k < OUTPUT_NODES; k++) {
-                sample_error += 0.5 * pow(target[k] - output[k], 2);  // 0.5是为了消除平方后的系数
+                if (target[k] > 0) {
+                    // 防止log(0)，可以添加一个很小的数如1e-15
+                    sample_error -= target[k] * log(output[k] + 1e-15);
+                }
             }
             total_error += sample_error;
-
             // 检查预测结果
             int predicted = 0;
             for (int k = 1; k < OUTPUT_NODES; k++) {
@@ -221,7 +289,7 @@ int main() {
             }
 
             // 反向传播
-            back_propagation(input, hidden1, hidden2, output, target, input_hidden1_weights, hidden1_hidden2_weights, hidden2_output_weights);
+            back_propagation(input, hidden1, hidden2, output, target, input_hidden1_weights, hidden1_hidden2_weights, hidden2_output_weights, HIDDEN_NODES_1, HIDDEN_NODES_2, LEARNING_RATE, L2_REGULARIZATION);
         }
         // 存储当前epoch的误差
         epoch_errors[epoch] = total_error;
@@ -230,7 +298,8 @@ int main() {
         printf("Epoch %d/%d, Training Accuracy: %.2f%%, Total Error: %.5f\n",
             epoch + 1, EPOCHS, (double)correct_train / TRAIN_IMAGES * 100.0, total_error);
     }
-    //预测结果存储到excel表中
+
+    // 预测结果存储到excel表中
     FILE* prediction_file;
     errno_t pred_err = fopen_s(&prediction_file, "C:\\Users\\HP\\Desktop\\pycharm\\put py here\\machine learning\\prediction_results.csv", "w");
     if (pred_err == 0) {
@@ -248,13 +317,15 @@ int main() {
         for (int j = 0; j < INPUT_NODES; j++) {
             input[j] = test_images[i][j];
         }
-        forward_propagation(input, hidden1, hidden2, output, input_hidden1_weights, hidden1_hidden2_weights, hidden2_output_weights);
+        forward_propagation(input, hidden1, hidden2, output, input_hidden1_weights, hidden1_hidden2_weights, hidden2_output_weights, HIDDEN_NODES_1, HIDDEN_NODES_2);
 
-
-        // 计算误差（均方误差）
+        // 计算误差（交叉熵）
         double sample_error = 0.0;
         for (int k = 0; k < OUTPUT_NODES; k++) {
-            sample_error += 0.5 * pow(target[k] - output[k], 2);  // 0.5是为了消除平方后的系数
+            if (target[k] > 0) {
+                // 防止log(0)，可以添加一个很小的数如1e-15
+                sample_error -= target[k] * log(output[k] + 1e-15);
+            }
         }
         total_error += sample_error;
 
@@ -272,26 +343,7 @@ int main() {
         }
     }
 
-    // 关闭文件
-    fclose(prediction_file);
-    printf("预测结果已保存到 prediction_results.csv 文件中\n");
-
     printf("Test Accuracy: %.2f%%, Total Error: %.5f\n", (double)correct_test / TEST_IMAGES * 100.0, total_error);
-    // 打印当前 epoch 的训练集正确率和总误差
-
-    // 保存误差数据到CSV文件
-    FILE* error_file;
-    errno_t err = fopen_s(&error_file, "C:\\Users\\HP\\Desktop\\pycharm\\put py here\\machine learning\\training_errors.csv", "w");
-    if (err == 0) {
-        fprintf(error_file, "Epoch,Error\n");
-        for (int epoch = 0; epoch < EPOCHS; epoch++) {
-            fprintf(error_file, "%d,%.5f\n", epoch + 1, epoch_errors[epoch]);
-        }
-        fclose(error_file);
-        printf("训练误差已保存到 training_errors.csv 文件中\n");
-    } else {
-        printf("保存误差数据失败。\n");
-    }
 
     // 释放内存
     free(input);
@@ -306,6 +358,9 @@ int main() {
     free(train_labels);
     free(test_images);
     free(test_labels);
+    free(epoch_errors);
 
-    return 1;
+    fclose(prediction_file);
+
+    return 0;
 }
